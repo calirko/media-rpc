@@ -1,0 +1,10 @@
+{
+  "app_id": "YOUR_DISCORD_APP_ID",
+  "priority": ["tidal", "spotify"],
+  "blacklist": [],
+  "player_icons": {
+    "spotify": "spotify",
+    "tidal": "tidal"
+  },
+  "small_icon": "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f3b5.png"
+}
