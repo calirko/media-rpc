@@ -76,7 +76,11 @@ func queryMPRIS(conn *dbus.Conn, service, id string) (Info, error) {
 			info.Album, _ = v.Value().(string)
 		}
 		if v, ok := meta["mpris:artUrl"]; ok {
-			info.ArtURL, _ = v.Value().(string)
+			rawArt, _ := v.Value().(string)
+			info.ArtURL = rawArt // resolved below
+		}
+		if v, ok := meta["xesam:url"]; ok {
+			info.TrackURL, _ = v.Value().(string)
 		}
 		if v, ok := meta["mpris:length"]; ok {
 			// length is in microseconds; handle both int64 and uint64
@@ -92,6 +96,8 @@ func queryMPRIS(conn *dbus.Conn, service, id string) (Info, error) {
 			}
 		}
 	}
+
+	info.ArtURL = resolveArtURL(info.ArtURL, info.TrackURL)
 
 	// Use player position for an accurate start timestamp
 	posVar, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.Position")

@@ -7,7 +7,8 @@ type Info struct {
 	Title     string
 	Artist    string
 	Album     string
-	ArtURL    string
+	ArtURL    string        // resolved public HTTPS URL, empty if unavailable
+	TrackURL  string        // xesam:url — original track page / stream URL from MPRIS
 	Playing   bool
 	StartedAt time.Time
 	Duration  time.Duration // 0 = unknown

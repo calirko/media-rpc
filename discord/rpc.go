@@ -42,6 +42,8 @@ func New(cfg *config.Config) *RPC {
 	}
 }
 
+var debugMode = os.Getenv("MEDIA_RPC_DEBUG") == "1"
+
 func (r *RPC) SetActivity(info media.Info) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -52,6 +54,10 @@ func (r *RPC) SetActivity(info media.Info) {
 		}
 	}
 	payload := r.buildSetActivity(&info)
+	if debugMode {
+		log.Printf("[debug] player=%s artURL=%q duration=%s\n", info.Player, info.ArtURL, info.Duration)
+		log.Printf("[debug] payload=%s\n", payload)
+	}
 	if err := r.c.sendPacket(opFrame, payload); err != nil {
 		log.Println("discord: send failed, reconnecting next tick:", err)
 		r.c.close()
@@ -150,6 +156,7 @@ type activityPayload struct {
 }
 
 type activity struct {
+	Type       int         `json:"type"`             // 2 = Listening to
 	Details    string      `json:"details,omitempty"`
 	State      string      `json:"state,omitempty"`
 	Assets     *imgAssets  `json:"assets,omitempty"`
@@ -170,6 +177,7 @@ type timestamps struct {
 
 func (r *RPC) buildSetActivity(info *media.Info) []byte {
 	act := activity{
+		Type:    2, // Listening to
 		Details: info.Title,
 		State:   stateLabel(info),
 	}
@@ -229,7 +237,7 @@ func capitalize(s string) string {
 func stateLabel(info *media.Info) string {
 	switch {
 	case info.Artist != "" && info.Album != "":
-		return info.Artist + " · " + info.Album
+		return info.Artist //+ " · " + info.Album
 	case info.Artist != "":
 		return info.Artist
 	default:
