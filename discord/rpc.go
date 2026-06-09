@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"media-rpc/config"
@@ -93,6 +94,21 @@ func (r *RPC) connect() packetConn {
 		return c
 	}
 	return nil
+}
+
+// MaintainConnection runs in the background and keeps the Discord connection alive.
+// It reconnects whenever the connection is nil, so media-rpc stays ready regardless
+// of whether Discord was running at startup or restarted later.
+func (r *RPC) MaintainConnection() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		r.mu.Lock()
+		if r.c == nil {
+			r.c = r.connect()
+		}
+		r.mu.Unlock()
+	}
 }
 
 func dialArpc(appID string) packetConn {

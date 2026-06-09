@@ -28,6 +28,8 @@ func main() {
 	rpc := discord.New(cfg)
 	t := tray.New(cfg, cfgPath, mgr, rpc)
 
+	go rpc.MaintainConnection()
+
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
