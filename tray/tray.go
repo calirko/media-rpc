@@ -2,10 +2,12 @@ package tray
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 
 	"fyne.io/systray"
 	"media-rpc/config"
@@ -115,7 +117,7 @@ func (t *Tray) handleEvents(mOpenConfig, mQuit *systray.MenuItem) {
 		case <-mQuit.ClickedCh:
 			t.rpc.Clear()
 			systray.Quit()
-			return
+			os.Exit(0)
 		}
 	}
 }
@@ -185,6 +187,7 @@ func openFile(path string) {
 	switch runtime.GOOS {
 	case "windows":
 		cmd = exec.Command("cmd", "/c", "start", "", path)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	case "darwin":
 		cmd = exec.Command("open", path)
 	default:

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -16,12 +17,20 @@ func newSMTCSource() Source { return &smtcSource{} }
 
 // smtcScript reads all active SMTC sessions via WinRT through PowerShell.
 // Each line: AppID|Title|Artist|Album|Status|PositionSec|DurationSec
+// Uses AsTask<T> reflection instead of GetAwaiter() to support Windows PowerShell 5.1,
+// where GetAwaiter() is not available on WinRT IAsyncOperation COM objects.
 const smtcScript = `
 try {
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
     $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType=WindowsRuntime]
-    $mgr = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync().GetAwaiter().GetResult()
+    $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media.Control, ContentType=WindowsRuntime]
+    $asTaskG = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetGenericArguments().Count -eq 1 -and $_.GetParameters().Count -eq 1 })[0]
+    function local:Await($op, $type) { $t = $asTaskG.MakeGenericMethod($type).Invoke($null, @($op)); $null = $t.Wait(3000); $t.Result }
+    $mgrType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType=WindowsRuntime]
+    $propType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media.Control, ContentType=WindowsRuntime]
+    $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) $mgrType
     foreach ($s in $mgr.GetSessions()) {
-        $p  = $s.TryGetMediaPropertiesAsync().GetAwaiter().GetResult()
+        $p  = Await ($s.TryGetMediaPropertiesAsync()) $propType
         $pb = $s.GetPlaybackInfo().PlaybackStatus
         $tl = $s.GetTimelineProperties()
         $pos = $tl.Position.TotalSeconds
@@ -32,12 +41,14 @@ try {
 `
 
 func (s *smtcSource) Players() ([]Info, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx,
+	cmd := exec.CommandContext(ctx,
 		"powershell", "-NoProfile", "-NonInteractive", "-Command", smtcScript,
-	).Output()
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +84,15 @@ func (s *smtcSource) Players() ([]Info, error) {
 		}
 		if info.StartedAt.IsZero() {
 			info.StartedAt = time.Now()
+		}
+
+		// SMTC exposes only a raw thumbnail stream, not a URL Discord can load,
+		// so resolve cover art from metadata via the iTunes Search API. Some
+		// apps (e.g. TIDAL) also omit AlbumTitle, so backfill that too.
+		art := itunesArt(info.Artist, info.Album, info.Title)
+		info.ArtURL = art.artURL
+		if info.Album == "" {
+			info.Album = art.album
 		}
 
 		players = append(players, info)

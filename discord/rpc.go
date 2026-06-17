@@ -47,35 +47,57 @@ var debugMode = os.Getenv("MEDIA_RPC_DEBUG") == "1"
 
 func (r *RPC) SetActivity(info media.Info) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.c == nil {
-		r.c = r.connect()
+	needsConnect := r.c == nil
+	r.mu.Unlock()
+
+	if needsConnect {
+		c := r.connect()
+		r.mu.Lock()
 		if r.c == nil {
-			return
+			r.c = c
+		} else if c != nil {
+			c.close()
 		}
+		r.mu.Unlock()
+	}
+
+	r.mu.Lock()
+	c := r.c
+	r.mu.Unlock()
+	if c == nil {
+		return
 	}
 	payload := r.buildSetActivity(&info)
 	if debugMode {
 		log.Printf("[debug] player=%s artURL=%q duration=%s\n", info.Player, info.ArtURL, info.Duration)
 		log.Printf("[debug] payload=%s\n", payload)
 	}
-	if err := r.c.sendPacket(opFrame, payload); err != nil {
+	if err := c.sendPacket(opFrame, payload); err != nil {
 		log.Println("discord: send failed, reconnecting next tick:", err)
-		r.c.close()
-		r.c = nil
+		r.mu.Lock()
+		if r.c == c {
+			r.c.close()
+			r.c = nil
+		}
+		r.mu.Unlock()
 	}
 }
 
 func (r *RPC) Clear() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.c == nil {
+	c := r.c
+	r.mu.Unlock()
+	if c == nil {
 		return
 	}
 	payload := r.buildClearActivity()
-	if err := r.c.sendPacket(opFrame, payload); err != nil {
-		r.c.close()
-		r.c = nil
+	if err := c.sendPacket(opFrame, payload); err != nil {
+		r.mu.Lock()
+		if r.c == c {
+			r.c.close()
+			r.c = nil
+		}
+		r.mu.Unlock()
 	}
 }
 
@@ -104,8 +126,17 @@ func (r *RPC) MaintainConnection() {
 	defer ticker.Stop()
 	for range ticker.C {
 		r.mu.Lock()
+		needsConnect := r.c == nil
+		r.mu.Unlock()
+		if !needsConnect {
+			continue
+		}
+		c := r.connect()
+		r.mu.Lock()
 		if r.c == nil {
-			r.c = r.connect()
+			r.c = c
+		} else if c != nil {
+			c.close()
 		}
 		r.mu.Unlock()
 	}
@@ -129,14 +160,29 @@ func handshake(c packetConn, appID string) error {
 	if err := c.sendPacket(opHandshake, hs); err != nil {
 		return err
 	}
-	_, payload, err := c.recvPacket()
-	if err != nil {
-		return err
+	type recvResult struct {
+		data []byte
+		err  error
+	}
+	ch := make(chan recvResult, 1)
+	go func() {
+		_, data, err := c.recvPacket()
+		ch <- recvResult{data, err}
+	}()
+	var r recvResult
+	select {
+	case r = <-ch:
+	case <-time.After(5 * time.Second):
+		c.close()
+		return fmt.Errorf("handshake timeout")
+	}
+	if r.err != nil {
+		return r.err
 	}
 	var resp struct {
 		Evt string `json:"evt"`
 	}
-	if err := json.Unmarshal(payload, &resp); err != nil {
+	if err := json.Unmarshal(r.data, &resp); err != nil {
 		return err
 	}
 	if resp.Evt != "READY" {
